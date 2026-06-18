@@ -1,0 +1,72 @@
+# =====================================================================
+#  mqtt_config.yml  -  Phase 4 MQTT Publisher
+# ---------------------------------------------------------------------
+#  แก้ไขแล้ว Save -> mqtt_publisher.py โหลดค่าใหม่ทันที ไม่ต้อง restart
+#  ถ้าแก้ broker/port/username/password -> reconnect ใหม่อัตโนมัติ
+# =====================================================================
+
+# ── MQTT Broker ──────────────────────────────────────────────────────
+mqtt:
+  broker:    "your-broker.example.com"
+  port:      8883          # 1883 = plain, 8883 = TLS
+  use_tls:   true
+  username:  "your_username"
+  password:  "your_password"
+  client_id: "jk_bms_pi4"
+  keepalive: 60
+
+# ── Flask API (app.py บนเครื่องเดียวกัน) ────────────────────────────
+flask:
+  host: "127.0.0.1"
+  port: 5000
+
+# ── รอบเวลาส่ง ───────────────────────────────────────────────────────
+publish:
+  interval_seconds: 60    # ส่งทุกกี่วินาที
+  qos:              0     # 0=fire&forget  1=at-least-once  2=exactly-once
+  retain:           false
+
+# ── Topic ปลายทาง (ส่ง JSON ก้อนเดียวที่นี่) ─────────────────────────
+topic: "jkbms/pi4/status"
+
+# ── ค่าที่จะรวมใน JSON ───────────────────────────────────────────────
+#  api   : endpoint ที่ดึงข้อมูล  ("/api/status" หรือ "/api/ambient")
+#  field : ชื่อ key ใน JSON response (ดูจาก curl /api/status)
+#  key   : ชื่อที่จะใช้ใน JSON payload ที่ส่งไป MQTT
+#  enable: true/false เปิด-ปิดแต่ละค่าได้ทันที ไม่ต้อง restart
+
+channels:
+  - api:    "/api/status"
+    field:  "pack_volt"
+    key:    "battery_voltage"
+    enable: true
+
+  - api:    "/api/status"
+    field:  "pack_curr"
+    key:    "battery_current"
+    enable: true
+
+  - api:    "/api/status"
+    field:  "temp_mos"
+    key:    "mos_temp"
+    enable: true
+
+  - api:    "/api/status"
+    field:  "temp_bat1"
+    key:    "batt_temp1"
+    enable: true
+
+  - api:    "/api/status"
+    field:  "temp_bat2"
+    key:    "batt_temp2"
+    enable: true
+
+  - api:    "/api/ambient"
+    field:  "temperature"
+    key:    "ambient_temp"
+    enable: true
+
+  - api:    "/api/ambient"
+    field:  "humidity"
+    key:    "ambient_humidity"
+    enable: true

@@ -71,18 +71,34 @@ def read_bms(client, slave=1):
         temp_bat2  = _int16(_r(c6, C6, R_TEMP_BAT2)) * 0.1
 
         # n=8: SOC, SOH, RemCap, FullCap, CycleCap, Alarms
+        # Also contains CycleCount (0x12AE) and ChgDch (0x12B0) —
+        # some firmware versions do NOT respond to chunk n=9 (0x12B4)
+        # but these registers are already inside chunk n=8.
         c8 = _chunk(client, C8, slave)
-        soc        = _r(c8, C8, R_SOC) & 0xFF           # LoByte = SOC%
-        soh        = (_r(c8, C8, R_SOH_REG) >> 8) & 0xFF  # HiByte of 0x12AC = SOH%
+        soc        = _r(c8, C8, R_SOC) & 0xFF
+        soh        = (_r(c8, C8, R_SOH_REG) >> 8) & 0xFF
         rem_cap    = _u32(_r(c8, C8, R_CAP_REMAIN_H), _r(c8, C8, R_CAP_REMAIN_L)) / 1000.0
         full_cap   = _u32(_r(c8, C8, R_CAP_FULL_H),   _r(c8, C8, R_CAP_FULL_L))   / 1000.0
-        cycle_cap  = _r(c8, C8, R_CYCLE_CAP) / 1000.0  # UINT16 mAh → Ah
+        cycle_cap  = _r(c8, C8, R_CYCLE_CAP) / 1000.0
         alm_flg    = _u32(_r(c8, C8, R_ALARM_H), _r(c8, C8, R_ALARM_L))
-
-        # n=9: CycleCount, State
+        # n=9: CycleCount, ChgDch, SysTicks — may not respond on all firmware versions
         c9 = _chunk(client, C9, slave)
-        cycle_cnt  = _r(c9, C9, R_CYCLE_CNT)
-        chg_dch    = _r(c9, C9, R_CHG_DCH)
+
+        # CycleCount and ChgDch: try n=9 first, fall back to n=8
+        # Both firmware versions store these at the same absolute addresses.
+        # When c9=None the registers fall within c8's range (offsets 14 & 16).
+        # NOTE: R_CYCLE_CNT=0x12B8 / R_CHG_DCH=0x12BA are offsets 24/26 from
+        # C8=0x12A0 — OUT of c8's 20-register window — so use the c8-valid
+        # addresses 0x12AE (offset 14) and 0x12B0 (offset 16) as fallbacks.
+        R_CYCLE_CNT_C8 = 0x12AE
+        R_CHG_DCH_C8   = 0x12B0
+        R_SYS_TICKS_C8 = 0x12AF  # also valid in c8 (offset 15)
+        if c9:
+            cycle_cnt = _r(c9, C9, R_CYCLE_CNT)
+            chg_dch   = _r(c9, C9, R_CHG_DCH)
+        else:
+            cycle_cnt = _r(c8, C8, R_CYCLE_CNT_C8)
+            chg_dch   = _r(c8, C8, R_CHG_DCH_C8)
 
         # RunTime: direct read (returns 0 inside chunk)
         run_secs = 0
@@ -95,7 +111,7 @@ def read_bms(client, slave=1):
         except Exception as e:
             log.warning("RunTime: %s", e)
         if run_secs == 0:
-            ticks = _r(c9, C9, R_SYS_TICKS)
+            ticks = _r(c9, C9, R_SYS_TICKS) if c9 else _r(c8, C8, R_SYS_TICKS_C8)
             if ticks > 0:
                 run_secs = int(ticks * 0.1)
 

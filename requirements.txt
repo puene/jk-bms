@@ -1,0 +1,6 @@
+flask==2.3.3
+markupsafe==2.1.5
+pymodbus==3.7.4
+adafruit-circuitpython-dht
+paho-mqtt
+PyYAML

@@ -116,6 +116,8 @@ def read_bms(client, slave=1):
             chg_dch   = _r(c8, C8, R_CHG_DCH_C8)
 
         # RunTime: direct read (returns 0 inside chunk)
+        # Needs 50ms recovery after consecutive chunk reads
+        time.sleep(0.05)
         run_secs = 0
         try:
             rr = client.read_holding_registers(address=R_RUNTIME_H, count=2, slave=slave)

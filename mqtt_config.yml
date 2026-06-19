@@ -8,11 +8,11 @@
 # ── MQTT Broker ──────────────────────────────────────────────────────
 mqtt:
   broker:    "your-broker.example.com"
-  port:      8883          # 1883 = plain, 8883 = TLS
-  use_tls:   true
+  port:      1883          # 1883 = plain, 8883 = TLS
+  use_tls:   false
   username:  "your_username"
   password:  "your_password"
-  client_id: "jk_bms_pi4"
+  client_id: "jk_bms_bma_000"
   keepalive: 60
 
 # ── Flask API (app.py บนเครื่องเดียวกัน) ────────────────────────────
@@ -23,11 +23,11 @@ flask:
 # ── รอบเวลาส่ง ───────────────────────────────────────────────────────
 publish:
   interval_seconds: 60    # ส่งทุกกี่วินาที
-  qos:              0     # 0=fire&forget  1=at-least-once  2=exactly-once
+  qos:              1    # 0=fire&forget  1=at-least-once  2=exactly-once
   retain:           false
 
 # ── Topic ปลายทาง (ส่ง JSON ก้อนเดียวที่นี่) ─────────────────────────
-topic: "jkbms/pi4/status"
+topic: "BWIM/BMA-000"
 
 # ── ค่าที่จะรวมใน JSON ───────────────────────────────────────────────
 #  api   : endpoint ที่ดึงข้อมูล  ("/api/status" หรือ "/api/ambient")
@@ -62,11 +62,16 @@ channels:
     enable: true
 
   - api:    "/api/ambient"
-    field:  "temperature"
+    field:  "temp"
     key:    "ambient_temp"
     enable: true
 
   - api:    "/api/ambient"
-    field:  "humidity"
+    field:  "hum"
     key:    "ambient_humidity"
+    enable: true
+
+  - api:    "/api/status"
+    field:  "soc"
+    key:    "soc"
     enable: true

@@ -117,18 +117,19 @@ def api_config():
 
 @app.route("/api/config/refresh")
 def api_config_refresh():
-    global _cfg_cache
-    try:
-        with _port_lock:
-            c = _get_client()
-            fresh = read_config(c, SLAVE)
-        with _lock:
-            _cfg_cache = fresh
+    global _cfg_dirty
+    # Signal the poller thread to re-read config on its next cycle.
+    # The poller already holds _port_lock when it reads, so this avoids
+    # the race condition of two threads accessing the serial port at once.
+    _cfg_dirty = True
+    # Wait up to 3 seconds for the poller to refresh the cache
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
+        time.sleep(0.1)
+        if not _cfg_dirty:   # poller cleared the flag = done
+            break
+    with _lock:
         return jsonify(dict(_cfg_cache))
-    except Exception as e:
-        log.error("config refresh: %s", e)
-        with _lock:
-            return jsonify(dict(_cfg_cache))
 
 @app.route("/api/write", methods=["POST"])
 def api_write():

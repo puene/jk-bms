@@ -244,6 +244,12 @@ setInterval(async ()=>{
 
 let cfgPending=true, histTF='24h', chartVI=null, chartTemp=null;
 
+// Auto-refresh History tab every 5 minutes when it's active
+// (DB logs every 60s so 5 min = ~5 new data points per refresh)
+setInterval(()=>{
+  if($('tab-history').classList.contains('on')) loadHistory();
+}, 5 * 60 * 1000);
+
 function showTab(n){
   ['status','settings','history'].forEach(t=>{
     $('tab-'+t).classList.toggle('on',t===n);

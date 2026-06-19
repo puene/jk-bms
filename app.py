@@ -81,6 +81,7 @@ def _poller():
                 d = read_bms(c, SLAVE)
                 cfg_snapshot = None
                 if _cfg_dirty:
+                    time.sleep(0.2)   # BMS needs recovery time after read_bms chunks
                     cfg_snapshot = read_config(c, SLAVE)
             log.debug("poller cycle %d: read_ok=%s", cycle, d.get("read_ok"))
             with _lock:

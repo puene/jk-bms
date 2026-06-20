@@ -81,7 +81,7 @@ def _poller():
                 d = read_bms(c, SLAVE)
                 cfg_snapshot = None
                 if _cfg_dirty:
-                    time.sleep(0.2)   # BMS needs recovery time after read_bms chunks
+                    time.sleep(0.5)   # BMS needs time to save written value to flash
                     cfg_snapshot = read_config(c, SLAVE)
             log.debug("poller cycle %d: read_ok=%s", cycle, d.get("read_ok"))
             with _lock:
@@ -142,7 +142,14 @@ def api_write():
                 time.sleep(0.3)   # let BMS settle before next config read
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
-    if ok: _cfg_dirty = True
+    if ok:
+        # BMS takes ~5s to save written value to flash.
+        # Set _cfg_dirty after 6s in background so poller reads fresh value.
+        def _mark_dirty_later():
+            time.sleep(6)
+            global _cfg_dirty
+            _cfg_dirty = True
+        threading.Thread(target=_mark_dirty_later, daemon=True).start()
     return jsonify({"ok": ok, "addr": info, "value": val})
 
 @app.route("/api/ambient")

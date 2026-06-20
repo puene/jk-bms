@@ -118,16 +118,7 @@ def api_config():
 @app.route("/api/config/refresh")
 def api_config_refresh():
     global _cfg_dirty
-    # Mark dirty so poller reads config on its next cycle
     _cfg_dirty = True
-    # Wait up to 15s for poller to complete a full cycle and clear the flag
-    deadline = time.time() + 15.0
-    while time.time() < deadline:
-        time.sleep(0.2)
-        with _lock:
-            if not _cfg_dirty:   # poller cleared it = fresh data ready
-                return jsonify(dict(_cfg_cache))
-    # Timed out — return whatever we have
     with _lock:
         return jsonify(dict(_cfg_cache))
 

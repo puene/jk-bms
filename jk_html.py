@@ -190,8 +190,7 @@ body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans
 
 <!-- SETTINGS -->
 <div class="panel" id="tab-settings">
-  <div class="cfg-hdr"><h2><i class="ti ti-adjustments"></i> Settings</h2>
-    <button class="btn-sm" onclick="refreshCfg()"><i class="ti ti-refresh"></i> Refresh</button></div>
+  <div class="cfg-hdr"><h2><i class="ti ti-adjustments"></i> Settings</h2></div>
   <div id="cfg-loading" style="display:none" class="loading"><span class="spin"></span>Loading<span class="dot-anim"></span></div>
   <div id="cfg-content"></div>
 </div>

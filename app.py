@@ -44,7 +44,8 @@ _lock      = threading.Lock()   # protects _latest / _cfg_cache (data)
 _port_lock = threading.Lock()   # protects _client / serial port access
 _latest    = {}
 _cfg_cache = {}
-_cfg_dirty = True
+_cfg_dirty      = True
+_cfg_dirty_after = 0.0   # epoch time: don't read config before this
 _ambient   = {"temp": None, "hum": None, "ts": 0}
 _client: Optional[ModbusSerialClient] = None
 
@@ -80,19 +81,23 @@ def _poller():
                 c = _get_client()
                 d = read_bms(c, SLAVE)
                 cfg_snapshot = None
-                if _cfg_dirty:
-                    time.sleep(0.5)   # BMS needs time to save written value to flash
+                if _cfg_dirty and time.time() >= _cfg_dirty_after:
+                    try:
+                        _client.close()
+                    except Exception:
+                        pass
+                    _client = None
+                    time.sleep(0.5)
+                    c = _get_client()
+                    time.sleep(0.3)
                     cfg_snapshot = read_config(c, SLAVE)
-                    if cfg_snapshot:
-                        tmp = cfg_snapshot.get('TMPBatCOT', {})
-                        log.info("config refresh: TMPBatCOT raw=%s value=%s",
-                                 tmp.get('raw'), tmp.get('value'))
             log.debug("poller cycle %d: read_ok=%s", cycle, d.get("read_ok"))
             with _lock:
                 _latest = d
                 if cfg_snapshot is not None:
                     _cfg_cache = cfg_snapshot
                     _cfg_dirty = False
+                    log.info("config refreshed OK")
             maybe_log(d, ambient_temp=_ambient.get("temp"))   # log to DB every 60s
             errs = 0
         except Exception as e:
@@ -141,6 +146,9 @@ def api_write():
     try:
         with _port_lock:
             c = _get_client()
+            # Wait 0.5s after acquiring lock — BMS needs recovery time after
+            # read_bms chunks before it will accept a write reliably
+            time.sleep(0.5)
             ok, info = write_setting(c, off, val, SLAVE)
             if ok:
                 time.sleep(0.3)   # let BMS settle before next config read
@@ -150,10 +158,11 @@ def api_write():
         # BMS takes ~5s to save written value to flash.
         # Set _cfg_dirty after 6s in background so poller reads fresh value.
         def _mark_dirty_later():
-            time.sleep(2)   # BMS saves to flash within 1s; 2s is safe margin
-            global _cfg_dirty
+            time.sleep(3)
+            global _cfg_dirty, _cfg_dirty_after
+            _cfg_dirty_after = time.time() + 2
             _cfg_dirty = True
-            log.info("config marked dirty after write — poller will refresh next cycle")
+            log.info("config marked dirty — will refresh on next poller cycle")
         threading.Thread(target=_mark_dirty_later, daemon=True).start()
     return jsonify({"ok": ok, "addr": info, "value": val})
 

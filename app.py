@@ -83,6 +83,10 @@ def _poller():
                 if _cfg_dirty:
                     time.sleep(0.5)   # BMS needs time to save written value to flash
                     cfg_snapshot = read_config(c, SLAVE)
+                    if cfg_snapshot:
+                        tmp = cfg_snapshot.get('TMPBatCOT', {})
+                        log.info("config refresh: TMPBatCOT raw=%s value=%s",
+                                 tmp.get('raw'), tmp.get('value'))
             log.debug("poller cycle %d: read_ok=%s", cycle, d.get("read_ok"))
             with _lock:
                 _latest = d
@@ -146,7 +150,7 @@ def api_write():
         # BMS takes ~5s to save written value to flash.
         # Set _cfg_dirty after 6s in background so poller reads fresh value.
         def _mark_dirty_later():
-            time.sleep(10)   # BMS needs ~5s to save to flash; 10s is safe margin
+            time.sleep(2)   # BMS saves to flash within 1s; 2s is safe margin
             global _cfg_dirty
             _cfg_dirty = True
             log.info("config marked dirty after write — poller will refresh next cycle")

@@ -117,31 +117,19 @@ def api_config():
 
 @app.route("/api/config/refresh")
 def api_config_refresh():
-    global _cfg_cache, _cfg_dirty
-    try:
-        with _port_lock:
-            c = _get_client()
-            time.sleep(0.5)   # wait for BMS to finish any previous operation
-            fresh = read_config(c, SLAVE)
-        if fresh and any(v.get("raw", 0) != 0 for v in fresh.values()):
-            with _lock:
-                _cfg_cache = fresh
-                _cfg_dirty = False
-            return jsonify(dict(fresh))
-        # fresh has all zeros — try once more
-        log.warning("config refresh: got all zeros, retrying...")
-        with _port_lock:
-            c = _get_client()
-            time.sleep(0.5)
-            fresh2 = read_config(c, SLAVE)
+    global _cfg_dirty
+    # Mark dirty so poller reads config on its next cycle
+    _cfg_dirty = True
+    # Wait up to 15s for poller to complete a full cycle and clear the flag
+    deadline = time.time() + 15.0
+    while time.time() < deadline:
+        time.sleep(0.2)
         with _lock:
-            _cfg_cache = fresh2
-            _cfg_dirty = False
-        return jsonify(dict(fresh2))
-    except Exception as e:
-        log.error("config refresh: %s", e)
-        with _lock:
-            return jsonify(dict(_cfg_cache))
+            if not _cfg_dirty:   # poller cleared it = fresh data ready
+                return jsonify(dict(_cfg_cache))
+    # Timed out — return whatever we have
+    with _lock:
+        return jsonify(dict(_cfg_cache))
 
 @app.route("/api/write", methods=["POST"])
 def api_write():

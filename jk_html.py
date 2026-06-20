@@ -326,9 +326,18 @@ async function loadCfg(){
   else $('cfg-loading').innerHTML='<span style="color:var(--red)">Load failed</span>';
   }catch(e){ $('cfg-loading').innerHTML='<span style="color:var(--red)">Error</span>'; } }
 async function refreshCfg(){
+  const btn = document.querySelector('.cfg-hdr .btn-sm');
+  if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader"></i> Loading...'; }
   cfgPending=true; $('cfg-loading').style.display='block'; $('cfg-content').innerHTML='';
-  try{ const r=await fetch('/api/config/refresh'); if(r.ok){ buildCfg(await r.json()); cfgPending=false; }
-  }catch(e){ $('cfg-loading').innerHTML='<span style="color:var(--red)">Error</span>'; } }
+  try{
+    const r=await fetch('/api/config/refresh');
+    if(r.ok){ buildCfg(await r.json()); cfgPending=false; }
+    else $('cfg-loading').innerHTML='<span style="color:var(--red)">Error</span>';
+  }catch(e){
+    $('cfg-loading').innerHTML='<span style="color:var(--red)">Error</span>';
+  }
+  if(btn){ btn.disabled=false; btn.innerHTML='<i class="ti ti-refresh"></i> Refresh'; }
+}
 function buildCfg(cfg){
   if(!cfg||!Object.keys(cfg).length){ $('cfg-loading').innerHTML='<span style="color:var(--red)">No data</span>'; return; }
   $('cfg-loading').style.display='none';

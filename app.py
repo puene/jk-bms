@@ -147,6 +147,8 @@ def api_write():
         with _port_lock:
             c = _get_client()
             ok, info = write_setting(c, off, val, SLAVE)
+            if ok:
+                time.sleep(0.3)   # let BMS settle before next config read
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
     if ok: _cfg_dirty = True

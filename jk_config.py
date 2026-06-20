@@ -38,12 +38,20 @@ def read_config(client, slave=1):
     """Read all settings. Returns dict keyed by field key."""
     import time
     regs = {}
+    first_chunk = True
     for addr, qty, label in [
         (0x1000, 100, "chunk1"),   # covers 0x1000..0x1063
         (0x1064,  40, "chunk2"),   # covers 0x1064..0x108B
     ]:
-        for attempt in range(3):  # retry up to 3 times
+        for attempt in range(4):  # retry up to 4 times
             try:
+                # Always wait before reading — BMS needs recovery time
+                # First chunk waits longer since it may follow a write or read_bms
+                if first_chunk:
+                    time.sleep(0.3)
+                    first_chunk = False
+                else:
+                    time.sleep(0.1)
                 r = client.read_holding_registers(address=addr, count=qty, slave=slave)
                 if hasattr(r, "registers"):
                     for i, v in enumerate(r.registers):
@@ -53,9 +61,9 @@ def read_config(client, slave=1):
                     log.warning("config %s attempt %d: no registers", label, attempt+1)
             except Exception as e:
                 log.warning("config %s attempt %d: %s", label, attempt+1, e)
-            time.sleep(0.2)   # wait before retry
+            time.sleep(0.3)   # wait before retry
         else:
-            log.error("config %s: failed after 3 attempts", label)
+            log.error("config %s: failed after 4 attempts", label)
 
     log.info("config: read %d registers", len(regs))
 

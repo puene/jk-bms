@@ -146,9 +146,10 @@ def api_write():
         # BMS takes ~5s to save written value to flash.
         # Set _cfg_dirty after 6s in background so poller reads fresh value.
         def _mark_dirty_later():
-            time.sleep(6)
+            time.sleep(10)   # BMS needs ~5s to save to flash; 10s is safe margin
             global _cfg_dirty
             _cfg_dirty = True
+            log.info("config marked dirty after write — poller will refresh next cycle")
         threading.Thread(target=_mark_dirty_later, daemon=True).start()
     return jsonify({"ok": ok, "addr": info, "value": val})
 

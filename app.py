@@ -121,12 +121,23 @@ def api_config_refresh():
     try:
         with _port_lock:
             c = _get_client()
-            time.sleep(0.3)   # BMS settle time before config read
+            time.sleep(0.5)   # wait for BMS to finish any previous operation
             fresh = read_config(c, SLAVE)
+        if fresh and any(v.get("raw", 0) != 0 for v in fresh.values()):
+            with _lock:
+                _cfg_cache = fresh
+                _cfg_dirty = False
+            return jsonify(dict(fresh))
+        # fresh has all zeros — try once more
+        log.warning("config refresh: got all zeros, retrying...")
+        with _port_lock:
+            c = _get_client()
+            time.sleep(0.5)
+            fresh2 = read_config(c, SLAVE)
         with _lock:
-            _cfg_cache = fresh
+            _cfg_cache = fresh2
             _cfg_dirty = False
-        return jsonify(dict(_cfg_cache))
+        return jsonify(dict(fresh2))
     except Exception as e:
         log.error("config refresh: %s", e)
         with _lock:

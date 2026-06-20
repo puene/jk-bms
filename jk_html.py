@@ -348,8 +348,17 @@ function toggleSec(el){ el.closest('.cfg-section').classList.toggle('closed'); }
 async function saveFld(key,woff,inpId,resId){
   const v=parseInt($(inpId).value); if(isNaN(v)){ $(resId).textContent='?'; $(resId).className='cfg-res err'; return; }
   $(resId).textContent='…'; $(resId).className='cfg-res';
-  try{ const r=await fetch('/api/write',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({write_off:woff,value:v})});
-    const d=await r.json(); $(resId).textContent=d.ok?'✓':'✗ '+(d.error||'?'); $(resId).className='cfg-res '+(d.ok?'ok':'err');
+  try{
+    const r=await fetch('/api/write',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({write_off:woff,value:v})});
+    const d=await r.json();
+    if(d.ok){
+      $(resId).textContent='✓'; $(resId).className='cfg-res ok';
+      // update displayed current value immediately — no need to refresh from server
+      const curEl = $(inpId).closest('.cfg-row').querySelector('.cfg-cur');
+      if(curEl) curEl.textContent=$(inpId).value;
+    } else {
+      $(resId).textContent='✗ '+(d.error||'?'); $(resId).className='cfg-res err';
+    }
   }catch(e){ $(resId).textContent='✗'; $(resId).className='cfg-res err'; }
   setTimeout(()=>{ $(resId).textContent=''; },4000); }
 

@@ -349,7 +349,7 @@ function buildCfg(cfg){
     html+=`<div class="cfg-section${open?'':' closed'}"><div class="cfg-sec-hdr ${gk}" onclick="toggleSec(this)">${gn}<span class="cfg-arrow">▼</span></div><div class="cfg-rows">`;
     fl.forEach(f=>{
       const disp=typeof f.value==='number'?(f.unit==='°C'?f.value.toFixed(1):Number.isInteger(f.value)?String(f.value):f.value.toFixed(3)):String(f.value??'--');
-      html+=`<div class="cfg-row"><span class="cfg-lbl">${f.label}</span><span class="cfg-cur">${disp}</span><span class="cfg-unit">${f.unit||''}</span><input class="cfg-inp" id="inp_${f.key}" value="${f.raw}" type="number"><button class="cfg-save" onclick="saveFld('${f.key}',${f.write_off},'inp_${f.key}','res_${f.key}')">Save</button><span class="cfg-res" id="res_${f.key}"></span></div>`; });
+      html+=`<div class="cfg-row" data-dtype="${f.dtype}" data-unit="${f.unit||''}"><span class="cfg-lbl">${f.label}</span><span class="cfg-cur">${disp}</span><span class="cfg-unit">${f.unit||''}</span><input class="cfg-inp" id="inp_${f.key}" value="${f.raw}" type="number"><button class="cfg-save" onclick="saveFld('${f.key}',${f.write_off},'inp_${f.key}','res_${f.key}')">Save</button><span class="cfg-res" id="res_${f.key}"></span></div>`; });
     html+='</div></div>'; });
   $('cfg-content').innerHTML=html; }
 function toggleSec(el){ el.closest('.cfg-section').classList.toggle('closed'); }
@@ -361,9 +361,18 @@ async function saveFld(key,woff,inpId,resId){
     const d=await r.json();
     if(d.ok){
       $(resId).textContent='✓'; $(resId).className='cfg-res ok';
-      // update displayed current value immediately — no need to refresh from server
-      const curEl = $(inpId).closest('.cfg-row').querySelector('.cfg-cur');
-      if(curEl) curEl.textContent=$(inpId).value;
+      // convert raw → display value using dtype from the row
+      const row = $(inpId).closest('.cfg-row');
+      const dtype = row ? row.dataset.dtype : '';
+      const unit  = row ? row.dataset.unit  : '';
+      let disp;
+      if(dtype==='mv')       disp = (v*0.001).toFixed(3);
+      else if(dtype==='ma')  disp = (v*0.001).toFixed(1);
+      else if(dtype==='tc')  disp = (v*0.1).toFixed(1);
+      else if(dtype==='tcs') disp = (v*0.1).toFixed(1);
+      else                   disp = String(v);
+      const curEl = row ? row.querySelector('.cfg-cur') : null;
+      if(curEl) curEl.textContent = disp;
     } else {
       $(resId).textContent='✗ '+(d.error||'?'); $(resId).className='cfg-res err';
     }

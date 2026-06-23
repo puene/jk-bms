@@ -44,7 +44,8 @@ _lock      = threading.Lock()   # protects _latest / _cfg_cache (data)
 _port_lock = threading.Lock()   # protects _client / serial port access
 _latest    = {}
 _cfg_cache = {}
-_cfg_dirty = True
+_cfg_dirty      = True
+_cfg_dirty_after = 0.0   # epoch time: don't read config before this
 _ambient   = {"temp": None, "hum": None, "ts": 0}
 _client: Optional[ModbusSerialClient] = None
 
@@ -80,7 +81,15 @@ def _poller():
                 c = _get_client()
                 d = read_bms(c, SLAVE)
                 cfg_snapshot = None
-                if _cfg_dirty:
+                if _cfg_dirty and time.time() >= _cfg_dirty_after:
+                    try:
+                        _client.close()
+                    except Exception:
+                        pass
+                    _client = None
+                    time.sleep(0.5)
+                    c = _get_client()
+                    time.sleep(0.3)
                     cfg_snapshot = read_config(c, SLAVE)
             log.debug("poller cycle %d: read_ok=%s", cycle, d.get("read_ok"))
             with _lock:
@@ -88,6 +97,7 @@ def _poller():
                 if cfg_snapshot is not None:
                     _cfg_cache = cfg_snapshot
                     _cfg_dirty = False
+                    log.info("config refreshed OK")
             maybe_log(d, ambient_temp=_ambient.get("temp"))   # log to DB every 60s
             errs = 0
         except Exception as e:
@@ -116,18 +126,10 @@ def api_config():
 
 @app.route("/api/config/refresh")
 def api_config_refresh():
-    global _cfg_cache
-    try:
-        with _port_lock:
-            c = _get_client()
-            fresh = read_config(c, SLAVE)
-        with _lock:
-            _cfg_cache = fresh
+    global _cfg_dirty
+    _cfg_dirty = True
+    with _lock:
         return jsonify(dict(_cfg_cache))
-    except Exception as e:
-        log.error("config refresh: %s", e)
-        with _lock:
-            return jsonify(dict(_cfg_cache))
 
 @app.route("/api/write", methods=["POST"])
 def api_write():
@@ -144,10 +146,24 @@ def api_write():
     try:
         with _port_lock:
             c = _get_client()
+            # Wait 0.5s after acquiring lock — BMS needs recovery time after
+            # read_bms chunks before it will accept a write reliably
+            time.sleep(0.5)
             ok, info = write_setting(c, off, val, SLAVE)
+            if ok:
+                time.sleep(0.3)   # let BMS settle before next config read
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
-    if ok: _cfg_dirty = True
+    if ok:
+        # BMS takes ~5s to save written value to flash.
+        # Set _cfg_dirty after 6s in background so poller reads fresh value.
+        def _mark_dirty_later():
+            time.sleep(3)
+            global _cfg_dirty, _cfg_dirty_after
+            _cfg_dirty_after = time.time() + 2
+            _cfg_dirty = True
+            log.info("config marked dirty — will refresh on next poller cycle")
+        threading.Thread(target=_mark_dirty_later, daemon=True).start()
     return jsonify({"ok": ok, "addr": info, "value": val})
 
 @app.route("/api/ambient")

@@ -31,6 +31,21 @@ def _chunk(client, start, slave, qty=20):
         log.warning("chunk 0x%04X: %s", start, e)
     return None
 
+def _chunk_safe(client, start, slave, qty=20, retries=2):
+    """Like _chunk but with retry + small delay for BMS firmware that needs
+    recovery time between consecutive Modbus requests."""
+    import time
+    for attempt in range(retries + 1):
+        if attempt > 0:
+            time.sleep(0.05)   # 50ms recovery time between retries
+        try:
+            r = client.read_holding_registers(address=start, count=qty, slave=slave)
+            if hasattr(r, "registers") and r.registers:
+                return r.registers
+        except Exception as e:
+            log.warning("chunk 0x%04X attempt %d: %s", start, attempt+1, e)
+    return None
+
 def _r(regs, base, addr):
     if regs is None: return 0
     i = addr - base
@@ -47,21 +62,32 @@ def read_bms(client, slave=1):
     d = {"read_ok": False, "error_msg": ""}
     try:
         # n=0: cell voltages
-        c0 = _chunk(client, C0, slave)
+        c0 = _chunk_safe(client, C0, slave)
         if c0 is None:
             d["error_msg"] = "No response from BMS"; return d
         cell_mv = [c0[i] for i in range(7)]
 
         # n=1: wire resistance (UINT16 mΩ)
-        c1 = _chunk(client, C1, slave)
-        cell_res = [_r(c1, C1, R_WIRE_RES[i]) for i in range(7)]
+        # Some firmware versions store resistance at 0x1225 (C1+0x11),
+        # others at 0x1243 (chunk n=3 base + offset 7).
+        # Detect by checking if C1 returns all zeros.
+        C3 = RT_BASE + 60   # 0x123C  alternate resistance location
+        R_WIRE_RES_C3 = 0x1243  # first cell resistance in C3
+        c1 = _chunk_safe(client, C1, slave)
+        cell_res_c1 = [_r(c1, C1, R_WIRE_RES[i]) for i in range(7)]
+        if any(v > 0 for v in cell_res_c1):
+            cell_res = cell_res_c1
+        else:
+            # fallback: read from chunk n=3
+            c3 = _chunk_safe(client, C3, slave)
+            cell_res = [_r(c3, C3, R_WIRE_RES_C3 + i) for i in range(7)]
 
         # n=5: TempMos
-        c5 = _chunk(client, C5, slave)
+        c5 = _chunk_safe(client, C5, slave)
         temp_mos = _int16(_r(c5, C5, R_TEMP_MOS)) * 0.1
 
         # n=6: BatVol, BatWatt, BatCurrent, TempBat
-        c6 = _chunk(client, C6, slave)
+        c6 = _chunk_safe(client, C6, slave)
         pack_volt  = _r(c6, C6, R_BAT_VOL) / 1000.0
         # BatWatt INT32 mW — signed (negative = discharging)
         bat_watt   = _i32(_r(c6, C6, R_BAT_WATT_H), _r(c6, C6, R_BAT_WATT_L))
@@ -74,7 +100,7 @@ def read_bms(client, slave=1):
         # Also contains CycleCount (0x12AE) and ChgDch (0x12B0) —
         # some firmware versions do NOT respond to chunk n=9 (0x12B4)
         # but these registers are already inside chunk n=8.
-        c8 = _chunk(client, C8, slave)
+        c8 = _chunk_safe(client, C8, slave)
         soc        = _r(c8, C8, R_SOC) & 0xFF
         soh        = (_r(c8, C8, R_SOH_REG) >> 8) & 0xFF
         rem_cap    = _u32(_r(c8, C8, R_CAP_REMAIN_H), _r(c8, C8, R_CAP_REMAIN_L)) / 1000.0
@@ -82,7 +108,7 @@ def read_bms(client, slave=1):
         cycle_cap  = _r(c8, C8, R_CYCLE_CAP) / 1000.0
         alm_flg    = _u32(_r(c8, C8, R_ALARM_H), _r(c8, C8, R_ALARM_L))
         # n=9: CycleCount, ChgDch, SysTicks — may not respond on all firmware versions
-        c9 = _chunk(client, C9, slave)
+        c9 = _chunk_safe(client, C9, slave)
 
         # CycleCount and ChgDch: try n=9 first, fall back to n=8
         # Both firmware versions store these at the same absolute addresses.
@@ -101,6 +127,8 @@ def read_bms(client, slave=1):
             chg_dch   = _r(c8, C8, R_CHG_DCH_C8)
 
         # RunTime: direct read (returns 0 inside chunk)
+        # Needs 50ms recovery after consecutive chunk reads
+        time.sleep(0.05)
         run_secs = 0
         try:
             rr = client.read_holding_registers(address=R_RUNTIME_H, count=2, slave=slave)

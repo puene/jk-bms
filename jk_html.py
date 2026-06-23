@@ -190,8 +190,7 @@ body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans
 
 <!-- SETTINGS -->
 <div class="panel" id="tab-settings">
-  <div class="cfg-hdr"><h2><i class="ti ti-adjustments"></i> Settings</h2>
-    <button class="btn-sm" onclick="refreshCfg()"><i class="ti ti-refresh"></i> Refresh</button></div>
+  <div class="cfg-hdr"><h2><i class="ti ti-adjustments"></i> Settings</h2></div>
   <div id="cfg-loading" style="display:none" class="loading"><span class="spin"></span>Loading<span class="dot-anim"></span></div>
   <div id="cfg-content"></div>
 </div>
@@ -298,15 +297,15 @@ function buildCells(mv,res,mx,mn,avg){
     for(let i=0;i<8;i++){ const b=document.createElement('div'); b.id='cb'+i;
       b.innerHTML=`<div class="cell-num">0${i+1}</div>`+
         `<div style="line-height:1.1"><span class="cell-mv" id="cmv${i}">-.---</span><span class="cell-vv" id="cvv${i}">V</span></div>`+
-        `<div class="cell-res" id="crs${i}">--mΩ</div>`;
+        `<div class="cell-res" id="crs${i}">--Ω</div>`;
       g.appendChild(b); } }
   for(let i=0;i<8;i++){ const v=mv[i]; const r=res[i]; const box=$('cb'+i);
-    if(!v){ box.className='cell-box c-ph'; $('cmv'+i).textContent='-.---'; $('cvv'+i).textContent='V'; $('crs'+i).textContent='--mΩ'; continue; }
+    if(!v){ box.className='cell-box c-ph'; $('cmv'+i).textContent='-.---'; $('cvv'+i).textContent='V'; $('crs'+i).textContent='--Ω'; continue; }
     const d=Math.abs(v-avg); let c='cell-box '+(d>30?'c-bad':d>15?'c-warn':'c-ok');
     if(v===mx) c+=' c-max'; if(v===mn) c+=' c-min'; box.className=c;
     $('cmv'+i).textContent=(v/1000).toFixed(3);
     $('cvv'+i).textContent='V';
-    $('crs'+i).textContent=(r!=null?Number(r).toFixed(1):'--')+'mΩ'; }
+    $('crs'+i).textContent=(r!=null&&r>0?(r/1000).toFixed(3):'--')+' Ω'; }
 }
 
 function ambTempClass(t){ if(t>=35)return 'hot'; if(t>=28)return 'warm'; if(t<18)return 'cold'; return 'normal'; }
@@ -326,9 +325,18 @@ async function loadCfg(){
   else $('cfg-loading').innerHTML='<span style="color:var(--red)">Load failed</span>';
   }catch(e){ $('cfg-loading').innerHTML='<span style="color:var(--red)">Error</span>'; } }
 async function refreshCfg(){
+  const btn = document.querySelector('.cfg-hdr .btn-sm');
+  if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader"></i> Loading...'; }
   cfgPending=true; $('cfg-loading').style.display='block'; $('cfg-content').innerHTML='';
-  try{ const r=await fetch('/api/config/refresh'); if(r.ok){ buildCfg(await r.json()); cfgPending=false; }
-  }catch(e){ $('cfg-loading').innerHTML='<span style="color:var(--red)">Error</span>'; } }
+  try{
+    const r=await fetch('/api/config/refresh');
+    if(r.ok){ buildCfg(await r.json()); cfgPending=false; }
+    else $('cfg-loading').innerHTML='<span style="color:var(--red)">Error</span>';
+  }catch(e){
+    $('cfg-loading').innerHTML='<span style="color:var(--red)">Error</span>';
+  }
+  if(btn){ btn.disabled=false; btn.innerHTML='<i class="ti ti-refresh"></i> Refresh'; }
+}
 function buildCfg(cfg){
   if(!cfg||!Object.keys(cfg).length){ $('cfg-loading').innerHTML='<span style="color:var(--red)">No data</span>'; return; }
   $('cfg-loading').style.display='none';
@@ -341,15 +349,33 @@ function buildCfg(cfg){
     html+=`<div class="cfg-section${open?'':' closed'}"><div class="cfg-sec-hdr ${gk}" onclick="toggleSec(this)">${gn}<span class="cfg-arrow">▼</span></div><div class="cfg-rows">`;
     fl.forEach(f=>{
       const disp=typeof f.value==='number'?(f.unit==='°C'?f.value.toFixed(1):Number.isInteger(f.value)?String(f.value):f.value.toFixed(3)):String(f.value??'--');
-      html+=`<div class="cfg-row"><span class="cfg-lbl">${f.label}</span><span class="cfg-cur">${disp}</span><span class="cfg-unit">${f.unit||''}</span><input class="cfg-inp" id="inp_${f.key}" value="${f.raw}" type="number"><button class="cfg-save" onclick="saveFld('${f.key}',${f.write_off},'inp_${f.key}','res_${f.key}')">Save</button><span class="cfg-res" id="res_${f.key}"></span></div>`; });
+      html+=`<div class="cfg-row" data-dtype="${f.dtype}" data-unit="${f.unit||''}"><span class="cfg-lbl">${f.label}</span><span class="cfg-cur">${disp}</span><span class="cfg-unit">${f.unit||''}</span><input class="cfg-inp" id="inp_${f.key}" value="${f.raw}" type="number"><button class="cfg-save" onclick="saveFld('${f.key}',${f.write_off},'inp_${f.key}','res_${f.key}')">Save</button><span class="cfg-res" id="res_${f.key}"></span></div>`; });
     html+='</div></div>'; });
   $('cfg-content').innerHTML=html; }
 function toggleSec(el){ el.closest('.cfg-section').classList.toggle('closed'); }
 async function saveFld(key,woff,inpId,resId){
   const v=parseInt($(inpId).value); if(isNaN(v)){ $(resId).textContent='?'; $(resId).className='cfg-res err'; return; }
   $(resId).textContent='…'; $(resId).className='cfg-res';
-  try{ const r=await fetch('/api/write',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({write_off:woff,value:v})});
-    const d=await r.json(); $(resId).textContent=d.ok?'✓':'✗ '+(d.error||'?'); $(resId).className='cfg-res '+(d.ok?'ok':'err');
+  try{
+    const r=await fetch('/api/write',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({write_off:woff,value:v})});
+    const d=await r.json();
+    if(d.ok){
+      $(resId).textContent='✓'; $(resId).className='cfg-res ok';
+      // convert raw → display value using dtype from the row
+      const row = $(inpId).closest('.cfg-row');
+      const dtype = row ? row.dataset.dtype : '';
+      const unit  = row ? row.dataset.unit  : '';
+      let disp;
+      if(dtype==='mv')       disp = (v*0.001).toFixed(3);
+      else if(dtype==='ma')  disp = (v*0.001).toFixed(1);
+      else if(dtype==='tc')  disp = (v*0.1).toFixed(1);
+      else if(dtype==='tcs') disp = (v*0.1).toFixed(1);
+      else                   disp = String(v);
+      const curEl = row ? row.querySelector('.cfg-cur') : null;
+      if(curEl) curEl.textContent = disp;
+    } else {
+      $(resId).textContent='✗ '+(d.error||'?'); $(resId).className='cfg-res err';
+    }
   }catch(e){ $(resId).textContent='✗'; $(resId).className='cfg-res err'; }
   setTimeout(()=>{ $(resId).textContent=''; },4000); }
 

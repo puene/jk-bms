@@ -107,7 +107,7 @@ body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans
 .cfg-res{font-size:11px;min-width:36px;text-align:right}
 .cfg-res.ok{color:var(--green)}.cfg-res.err{color:var(--red)}
 /* Communication */
-.cfg-sec-hdr.comm{color:var(--cyan);cursor:default}
+.cfg-sec-hdr.comm{color:var(--cyan)}
 .comm-badge{font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;border:1px solid var(--bdr);color:var(--muted);letter-spacing:.04em}
 .comm-badge.ble{color:var(--cyan);border-color:#1a5560}
 .comm-badge.rs485{color:var(--amber);border-color:#6b3d10}
@@ -216,7 +216,7 @@ body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans
 <div class="panel" id="tab-settings">
   <div class="cfg-hdr"><h2><i class="ti ti-adjustments"></i> Settings</h2></div>
   <div class="cfg-section" id="comm-box">
-    <div class="cfg-sec-hdr comm"><span><i class="ti ti-antenna"></i> Communication</span></div>
+    <div class="cfg-sec-hdr comm" onclick="toggleSec(this)"><span><i class="ti ti-antenna"></i> Communication</span><span class="cfg-arrow">▼</span></div>
     <div class="cfg-rows">
       <div class="cfg-row"><span class="cfg-lbl">Interface</span>
         <div class="seg"><button id="if-ble" onclick="setIface('ble')">BLE</button><button id="if-rs485" onclick="setIface('rs485')">RS485</button></div></div>

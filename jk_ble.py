@@ -81,9 +81,7 @@ def decode_cell_info(f: bytes) -> dict:
     cmin = min(valid) if valid else 0
     cavg = round(sum(valid) / len(valid), 1) if valid else 0.0
     run_secs = _u32(f, 194)
-    # NOTE: bit meanings of the alarm word are not verified on hardware yet;
-    # decoded with the same ALARM_BITS table as the RS485 reader.
-    alm_flg = _u32(f, 166)
+    alm_flg = _u32(f, 166)       # AlarmSta, same word as RS485 0x12A0/A1
     return {
         "read_ok":      True,
         "error_msg":    "",

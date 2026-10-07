@@ -12,7 +12,7 @@ the same functionality without that overhead, so this is a straight
 simplification rather than a workaround.
 """
 from __future__ import annotations
-import os, threading, time, logging
+import os, re, sys, json, signal, threading, time, logging
 from typing import Optional
 
 from flask import Flask, jsonify, request
@@ -21,6 +21,7 @@ from pymodbus.client import ModbusSerialClient
 from jk_reader import read_bms
 from jk_config import read_config, write_setting
 from jk_db     import init_db, maybe_log, query_history
+from jk_ble    import JkBle
 
 logging.basicConfig(level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -30,6 +31,63 @@ PORT     = "/dev/ttyUSB0"
 BAUDRATE = 115200
 SLAVE    = 1
 POLL_SEC = 1.0
+
+# ── Communication interface (BLE default, or RS485) ─────────────────────────
+# Persisted per Pi in comm_config.json (not part of the repo / update.sh).
+COMM_FILE    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "comm_config.json")
+COMM_DEFAULT = {"interface": "ble", "ble_mac": None, "ble_name": None}
+RELEASE_SEC  = 600     # "release BLE" button: let the JK phone app connect
+MAC_RE       = re.compile(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$")
+
+def _load_comm() -> dict:
+    c = dict(COMM_DEFAULT)
+    try:
+        with open(COMM_FILE) as f:
+            c.update(json.load(f))
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logging.getLogger("app").warning("comm_config.json: %s — using defaults", e)
+    if c.get("interface") not in ("ble", "rs485"):
+        c["interface"] = "ble"
+    return c
+
+def _save_comm(c: dict):
+    tmp = COMM_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(c, f, indent=2)
+    os.replace(tmp, COMM_FILE)
+
+_comm_lock = threading.Lock()
+_comm      = _load_comm()
+
+def _on_ble_auto_pick(mac, name):
+    with _comm_lock:
+        _comm.update(ble_mac=mac, ble_name=name)
+        _save_comm(_comm)
+
+_ble = JkBle(on_auto_pick=_on_ble_auto_pick)
+
+def _apply_comm():
+    with _comm_lock:
+        _ble.configure(enabled=_comm["interface"] == "ble", mac=_comm.get("ble_mac"))
+
+def _install_shutdown_handler():
+    """systemctl stop/restart sends SIGTERM: close BLE before exiting."""
+    def _shutdown(*_):
+        logging.getLogger("app").info("SIGTERM — closing BLE")
+        _ble.shutdown()
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+def _active_interface() -> Optional[str]:
+    """Interface the poller reads from now: 'ble', 'rs485', or None
+    (BLE released for the phone app and no RS485 adapter present)."""
+    with _comm_lock:
+        iface = _comm["interface"]
+    if iface == "ble" and _ble.released_for() > 0:
+        return "rs485" if os.path.exists(PORT) else None
+    return iface
 
 try:
     import board, adafruit_dht
@@ -76,10 +134,33 @@ def _poller():
                     _ambient.update({"temp": round(t,1), "hum": round(h,1), "ts": time.time()})
             except Exception: pass
 
+        iface = _active_interface()
+        if iface != "rs485":
+            # BLE (or nothing): keep /dev/ttyUSB0 closed so a dead or missing
+            # USB/RS485 adapter can't affect anything.
+            with _port_lock:
+                if _client is not None:
+                    try: _client.close()
+                    except Exception: pass
+                    _client = None
+            if iface == "ble":
+                d = _ble.latest() or {"read_ok": False, "comm": "ble",
+                    "error_msg": _ble.status()["error"] or "waiting for BLE data"}
+            else:
+                d = {"read_ok": False, "comm": None,
+                     "error_msg": "BLE released for phone app, no RS485 adapter"}
+            with _lock:
+                _latest = d
+            maybe_log(d, ambient_temp=_ambient.get("temp"))
+            errs = 0
+            time.sleep(max(0, POLL_SEC - (time.time() - t0)))
+            continue
+
         try:
             with _port_lock:
                 c = _get_client()
                 d = read_bms(c, SLAVE)
+                d["comm"] = "rs485"
                 cfg_snapshot = None
                 if _cfg_dirty and time.time() >= _cfg_dirty_after:
                     try:
@@ -118,15 +199,22 @@ def api_status():
     with _lock:
         if _latest.get("read_ok"):
             return jsonify(_latest)
-    return jsonify({"read_ok": False}), 503
+        info = {"read_ok": False, "comm": _latest.get("comm"),
+                "error_msg": _latest.get("error_msg", "")}
+    return jsonify(info), 503
 
 @app.route("/api/config")
 def api_config():
+    if _active_interface() == "ble":
+        return jsonify(_ble.config())      # from BLE settings frame (read-only)
     with _lock: return jsonify(dict(_cfg_cache))
 
 @app.route("/api/config/refresh")
 def api_config_refresh():
     global _cfg_dirty
+    if _active_interface() == "ble":
+        _ble.refresh_config()
+        return jsonify(_ble.config())
     _cfg_dirty = True
     with _lock:
         return jsonify(dict(_cfg_cache))
@@ -134,6 +222,9 @@ def api_config_refresh():
 @app.route("/api/write", methods=["POST"])
 def api_write():
     global _cfg_dirty
+    if _active_interface() != "rs485":
+        return jsonify({"ok": False,
+                        "error": "Settings can only be written over RS485"}), 409
     body = request.get_json(force=True) or {}
     off  = body.get("write_off")
     val  = body.get("value")
@@ -166,6 +257,56 @@ def api_write():
         threading.Thread(target=_mark_dirty_later, daemon=True).start()
     return jsonify({"ok": ok, "addr": info, "value": val})
 
+@app.route("/api/comm")
+def api_comm_get():
+    with _comm_lock:
+        c = dict(_comm)
+    return jsonify({
+        "interface":   c["interface"],
+        "active":      _active_interface(),
+        "ble":         dict(_ble.status(), name=c.get("ble_name")),
+        "rs485":       {"port": PORT, "present": os.path.exists(PORT)},
+        "release_sec": RELEASE_SEC,
+    })
+
+@app.route("/api/comm", methods=["POST"])
+def api_comm_set():
+    global _cfg_dirty
+    body  = request.get_json(force=True) or {}
+    iface = body.get("interface")
+    if iface not in ("ble", "rs485"):
+        return jsonify({"ok": False, "error": "interface must be 'ble' or 'rs485'"}), 400
+    with _comm_lock:
+        _comm["interface"] = iface
+        if "ble_mac" in body:
+            mac = (body.get("ble_mac") or "").strip().upper()
+            if mac and not MAC_RE.match(mac):
+                return jsonify({"ok": False, "error": "invalid MAC address"}), 400
+            _comm["ble_mac"]  = mac or None
+            _comm["ble_name"] = (body.get("ble_name") or "").strip() or None
+        _save_comm(_comm)
+    _apply_comm()
+    _cfg_dirty = True
+    log.info("comm set: %s mac=%s", iface, _comm.get("ble_mac"))
+    return jsonify({"ok": True})
+
+@app.route("/api/comm/scan", methods=["POST"])
+def api_comm_scan():
+    try:
+        return jsonify({"ok": True, "devices": _ble.scan(8.0)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/comm/release", methods=["POST"])
+def api_comm_release():
+    body = request.get_json(force=True) or {}
+    sec  = body.get("seconds", RELEASE_SEC)
+    if not isinstance(sec, int) or not (0 <= sec <= 3600):
+        return jsonify({"ok": False, "error": "seconds must be 0..3600"}), 400
+    _ble.release(sec)
+    log.info("BLE release: %ds", sec)
+    return jsonify({"ok": True, "released_for": sec})
+
 @app.route("/api/ambient")
 def api_ambient(): return jsonify(_ambient)
 
@@ -184,7 +325,10 @@ def index():
 
 if __name__ == "__main__":
     init_db()
-    log.info("JK BMS Phase 3 | %s @%d slave=%s poll=%.1fs DHT=%s",
+    _apply_comm()
+    _install_shutdown_handler()
+    log.info("JK BMS Phase 3 | comm=%s ble_mac=%s | %s @%d slave=%s poll=%.1fs DHT=%s",
+             _comm["interface"], _comm.get("ble_mac"),
              PORT, BAUDRATE, SLAVE, POLL_SEC, DHT_OK)
     threading.Thread(target=_poller, daemon=True, name="poller").start()
     app.run(host="0.0.0.0", port=5000, debug=False,

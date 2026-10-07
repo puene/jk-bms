@@ -47,7 +47,7 @@ echo ""
 # ── 1. System packages ──────────────────────────────────────────────────────
 step "1/5  System packages"
 apt-get update -qq
-apt-get install -y -qq python3-venv python3-pip libgpiod2
+apt-get install -y -qq python3-venv python3-pip libgpiod2 bluez
 info "System packages ready"
 
 # ── 2. Download project files ───────────────────────────────────────────────
@@ -63,6 +63,7 @@ FILES=(
     "jk_config.py"
     "jk_db.py"
     "jk_html.py"
+    "jk_ble.py"
     "mqtt_publisher.py"
     "requirements.txt"
 )

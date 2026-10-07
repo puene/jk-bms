@@ -10,7 +10,7 @@ PI_USER="pi"
 [[ $EUID -ne 0 ]] && echo "Run with sudo" && exit 1
 
 echo "Updating JK BMS..."
-FILES=(app.py jk_registers.py jk_reader.py jk_config.py jk_db.py jk_html.py mqtt_publisher.py requirements.txt)
+FILES=(app.py jk_registers.py jk_reader.py jk_config.py jk_db.py jk_html.py jk_ble.py mqtt_publisher.py requirements.txt)
 for f in "${FILES[@]}"; do
     echo -n "  $f ... "
     curl -fsSL "$REPO_BASE/$f" -o "$INSTALL_DIR/$f" && echo "OK" || echo "FAILED"

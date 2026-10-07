@@ -47,6 +47,18 @@ def _chunk_safe(client, start, slave, qty=20, retries=2):
             log.warning("chunk 0x%04X attempt %d: %s", start, attempt+1, e)
     return None
 
+def format_runtime(run_secs):
+    """Format: X Years Y Months Z Days (shared by RS485 and BLE readers)."""
+    years  = run_secs // (365 * 86400)
+    remain = run_secs  % (365 * 86400)
+    months = remain   // (30  * 86400)
+    days   = (remain  %  (30  * 86400)) // 86400
+    parts  = []
+    if years:  parts.append(f"{years} Year{'s' if years > 1 else ''}")
+    if months: parts.append(f"{months} Month{'s' if months > 1 else ''}")
+    parts.append(f"{days} Day{'s' if days != 1 else ''}")
+    return " ".join(parts)
+
 def _r(regs, base, addr):
     if regs is None: return 0
     i = addr - base
@@ -139,16 +151,7 @@ def read_bms(client, slave=1):
             # fallback: same RunTime as UINT32 seconds at 0x12AE/AF (chunk n=8)
             run_secs = _u32(_r(c8, C8, R_RUNTIME_C8_H), _r(c8, C8, R_RUNTIME_C8_L))
 
-        # Format: X Years Y Months Z Days
-        years  = run_secs // (365 * 86400)
-        remain = run_secs  % (365 * 86400)
-        months = remain   // (30  * 86400)
-        days   = (remain  %  (30  * 86400)) // 86400
-        parts  = []
-        if years:  parts.append(f"{years} Year{'s' if years > 1 else ''}")
-        if months: parts.append(f"{months} Month{'s' if months > 1 else ''}")
-        parts.append(f"{days} Day{'s' if days != 1 else ''}")
-        run_str = " ".join(parts)
+        run_str = format_runtime(run_secs)
 
         valid = [v for v in cell_mv if v > 0]
         cmax = max(valid) if valid else 0

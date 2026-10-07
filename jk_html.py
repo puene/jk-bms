@@ -106,6 +106,30 @@ body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans
 .cfg-save:hover{opacity:.85}
 .cfg-res{font-size:11px;min-width:36px;text-align:right}
 .cfg-res.ok{color:var(--green)}.cfg-res.err{color:var(--red)}
+/* Communication */
+.cfg-sec-hdr.comm{color:var(--cyan);cursor:default}
+.comm-badge{font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;border:1px solid var(--bdr);color:var(--muted);letter-spacing:.04em}
+.comm-badge.ble{color:var(--cyan);border-color:#1a5560}
+.comm-badge.rs485{color:var(--amber);border-color:#6b3d10}
+.seg{display:flex;border:1px solid var(--bdr);border-radius:var(--r2);overflow:hidden}
+.seg button{background:var(--surf2);border:none;color:var(--muted);padding:5px 16px;font-size:12px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--bdr)}
+.seg button.on{background:var(--accent);color:#fff}
+.comm-val{font-size:12px;color:var(--txt);text-align:right}
+.comm-val.ok{color:var(--green)}.comm-val.bad{color:var(--red)}.comm-val.warn{color:var(--amber)}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--muted)}
+.scan-item{display:flex;align-items:center;gap:8px;padding:6px 13px 6px 26px;border-top:1px dashed var(--bdr);font-size:12px}
+.scan-item .nm{flex:1}
+.cfg-note{font-size:11px;color:var(--amber);padding:0 2px 10px}
+@media (max-width:560px){
+  .hdr-logo{padding:0 8px}
+  .nav-btn{padding:0 8px}
+  .hdr-right{padding:0 8px;gap:6px}
+  .amb>span:first-child{display:none}
+  #comm-box .cfg-row{flex-wrap:wrap}
+  #comm-box .cfg-lbl{flex-basis:100%}
+  #comm-box .comm-val{flex:1;text-align:left}
+}
 /* History */
 .hist-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
 .hist-toolbar h2{font-size:14px;font-weight:600;flex:1}
@@ -127,7 +151,7 @@ body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans
     <button class="nav-btn"    id="btn-history"  onclick="showTab('history')"><i class="ti ti-chart-line"></i> History</button>
   </div>
   <div class="hdr-right">
-    <div class="conn-pill"><span class="dot" id="dot"></span></div>
+    <div class="conn-pill"><span class="comm-badge" id="comm-badge">--</span><span class="dot" id="dot"></span></div>
     <div class="amb">
       <span style="font-size:11px;color:var(--muted);margin-right:2px">Ambient</span>
       <span class="amb-pill normal" id="amb-t"><i class="ti ti-thermometer"></i> --°C</span>
@@ -191,6 +215,25 @@ body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans
 <!-- SETTINGS -->
 <div class="panel" id="tab-settings">
   <div class="cfg-hdr"><h2><i class="ti ti-adjustments"></i> Settings</h2></div>
+  <div class="cfg-section" id="comm-box">
+    <div class="cfg-sec-hdr comm"><span><i class="ti ti-antenna"></i> Communication</span></div>
+    <div class="cfg-rows">
+      <div class="cfg-row"><span class="cfg-lbl">Interface</span>
+        <div class="seg"><button id="if-ble" onclick="setIface('ble')">BLE</button><button id="if-rs485" onclick="setIface('rs485')">RS485</button></div></div>
+      <div class="cfg-row"><span class="cfg-lbl">Reading from now</span><span class="comm-val" id="comm-active">--</span></div>
+      <div class="cfg-row"><span class="cfg-lbl">BLE device</span>
+        <span class="comm-val" id="ble-dev">--</span>
+        <button class="btn-sm" id="ble-scan-btn" onclick="scanBle()"><i class="ti ti-radar"></i> Scan</button></div>
+      <div id="ble-scan-list"></div>
+      <div class="cfg-row"><span class="cfg-lbl">BLE status</span><span class="comm-val" id="ble-st">--</span></div>
+      <div class="cfg-row"><span class="cfg-lbl">BMS model (BLE)</span><span class="comm-val" id="ble-model">--</span></div>
+      <div class="cfg-row"><span class="cfg-lbl">JK phone app access</span>
+        <span class="comm-val" id="ble-rel-st">--</span>
+        <button class="btn-sm" id="ble-rel-btn" onclick="toggleRelease()">Release BLE 10 min</button></div>
+      <div class="cfg-row"><span class="cfg-lbl">RS485 adapter</span><span class="comm-val" id="rs-st">--</span></div>
+    </div>
+  </div>
+  <div id="cfg-note" class="cfg-note" style="display:none"><i class="ti ti-lock"></i> BMS settings are read over BLE (read-only). Switch to RS485 to change them.</div>
   <div id="cfg-loading" style="display:none" class="loading"><span class="spin"></span>Loading<span class="dot-anim"></span></div>
   <div id="cfg-content"></div>
 </div>
@@ -227,8 +270,9 @@ let lastPollOk = false;
 setInterval(async ()=>{
   try{
     const r = await fetch('/api/status');
+    const d = await r.json();
+    setBadge(d.comm);
     if(r.ok){
-      const d = await r.json();
       if(d.read_ok){
         updateSt(d);
         if(!lastPollOk){ $('dot').classList.add('live'); lastPollOk = true; }
@@ -321,6 +365,7 @@ fetchAmb(); setInterval(fetchAmb,30000);
 const GROUPS={basic:'Basic Settings',adv_volt:'Advance — Voltage',adv_curr:'Advance — Current / OCP',adv_temp:'Advance — Temperature'};
 async function loadCfg(){
   $('cfg-loading').style.display='block'; $('cfg-content').innerHTML='';
+  await loadComm();
   try{ const r=await fetch('/api/config'); if(r.ok){ buildCfg(await r.json()); cfgPending=false; }
   else $('cfg-loading').innerHTML='<span style="color:var(--red)">Load failed</span>';
   }catch(e){ $('cfg-loading').innerHTML='<span style="color:var(--red)">Error</span>'; } }
@@ -338,8 +383,13 @@ async function refreshCfg(){
   if(btn){ btn.disabled=false; btn.innerHTML='<i class="ti ti-refresh"></i> Refresh'; }
 }
 function buildCfg(cfg){
-  if(!cfg||!Object.keys(cfg).length){ $('cfg-loading').innerHTML='<span style="color:var(--red)">No data</span>'; return; }
+  if(!cfg||!Object.keys(cfg).length){
+    // BLE settings frame may not have arrived yet — retry shortly
+    $('cfg-loading').innerHTML='<span style="color:var(--muted)">No data yet</span>';
+    cfgPending=true; setTimeout(()=>{ if($('tab-settings').classList.contains('on')&&cfgPending) loadCfg(); },5000);
+    return; }
   $('cfg-loading').style.display='none';
+  const ro = !!(comm && comm.active==='ble');
   const groups={};
   Object.entries(cfg).forEach(([k,f])=>{ (groups[f.group]||(groups[f.group]=[])).push({key:k,...f}); });
   let html='';
@@ -349,7 +399,8 @@ function buildCfg(cfg){
     html+=`<div class="cfg-section${open?'':' closed'}"><div class="cfg-sec-hdr ${gk}" onclick="toggleSec(this)">${gn}<span class="cfg-arrow">▼</span></div><div class="cfg-rows">`;
     fl.forEach(f=>{
       const disp=typeof f.value==='number'?(f.unit==='°C'?f.value.toFixed(1):Number.isInteger(f.value)?String(f.value):f.value.toFixed(3)):String(f.value??'--');
-      html+=`<div class="cfg-row" data-dtype="${f.dtype}" data-unit="${f.unit||''}"><span class="cfg-lbl">${f.label}</span><span class="cfg-cur">${disp}</span><span class="cfg-unit">${f.unit||''}</span><input class="cfg-inp" id="inp_${f.key}" value="${f.raw}" type="number"><button class="cfg-save" onclick="saveFld('${f.key}',${f.write_off},'inp_${f.key}','res_${f.key}')">Save</button><span class="cfg-res" id="res_${f.key}"></span></div>`; });
+      const edit = ro ? '' : `<input class="cfg-inp" id="inp_${f.key}" value="${f.raw}" type="number"><button class="cfg-save" onclick="saveFld('${f.key}',${f.write_off},'inp_${f.key}','res_${f.key}')">Save</button><span class="cfg-res" id="res_${f.key}"></span>`;
+      html+=`<div class="cfg-row" data-dtype="${f.dtype}" data-unit="${f.unit||''}"><span class="cfg-lbl">${f.label}</span><span class="cfg-cur">${disp}</span><span class="cfg-unit">${f.unit||''}</span>${edit}</div>`; });
     html+='</div></div>'; });
   $('cfg-content').innerHTML=html; }
 function toggleSec(el){ el.closest('.cfg-section').classList.toggle('closed'); }
@@ -378,6 +429,62 @@ async function saveFld(key,woff,inpId,resId){
     }
   }catch(e){ $(resId).textContent='✗'; $(resId).className='cfg-res err'; }
   setTimeout(()=>{ $(resId).textContent=''; },4000); }
+
+/* ── Communication (BLE / RS485) ── */
+let comm=null;
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function setBadge(c){ const b=$('comm-badge'); b.textContent=c?c.toUpperCase():'--'; b.className='comm-badge '+(c||''); }
+function setVal(id,html,cls){ const e=$(id); e.innerHTML=html; e.className='comm-val '+(cls||''); }
+async function postJ(url,body){
+  try{
+    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json(); if(!d.ok) alert(d.error||'Error'); return d;
+  }catch(e){ alert('Error: '+e.message); return {ok:false}; } }
+async function loadComm(){
+  try{ comm=await(await fetch('/api/comm')).json(); renderComm(); }catch(e){} }
+function renderComm(){
+  const c=comm; if(!c) return; const b=c.ble, di=b.device_info||{};
+  $('if-ble').classList.toggle('on',c.interface==='ble');
+  $('if-rs485').classList.toggle('on',c.interface==='rs485');
+  let act=c.active?c.active.toUpperCase():'none';
+  if(c.interface==='ble'&&c.active!=='ble') act+=' (BLE released)';
+  setVal('comm-active',esc(act),c.active?'ok':'bad');
+  setVal('ble-dev', b.mac ? esc(b.name||di.device_name||'JK BMS')+' <span class="mono">'+esc(b.mac)+'</span>'
+                          : '<span class="mono">not selected — Scan</span>');
+  if(!b.enabled)            setVal('ble-st','off (RS485 selected)');
+  else if(b.released_for>0) setVal('ble-st','released for phone app','warn');
+  else if(b.connected)      setVal('ble-st','connected · data '+(b.last_frame_age??'--')+' s ago','ok');
+  else                      setVal('ble-st',esc(b.error||'connecting…'),'warn');
+  setVal('ble-model', di.model ? esc(di.model)+' · HW '+esc(di.hw_version)+' · SW '+esc(di.sw_version) : '--');
+  const rel=b.released_for>0;
+  setVal('ble-rel-st', rel ? 'released · '+Math.floor(b.released_for/60)+':'+String(b.released_for%60).padStart(2,'0')+' left'
+                           : (b.enabled?'blocked while Pi is connected':'--'), rel?'warn':'');
+  $('ble-rel-btn').textContent = rel ? 'Reconnect BLE now' : 'Release BLE '+Math.round(c.release_sec/60)+' min';
+  $('ble-rel-btn').disabled = c.interface!=='ble';
+  setVal('rs-st', esc(c.rs485.port)+(c.rs485.present?' present':' not found'), c.rs485.present?'ok':'bad');
+  $('cfg-note').style.display = c.active==='ble' ? 'block' : 'none';
+}
+async function setIface(i){
+  if(comm&&comm.interface===i) return;
+  if(!confirm('Switch communication to '+i.toUpperCase()+'?')) return;
+  await postJ('/api/comm',{interface:i}); await loadComm(); cfgPending=true; loadCfg(); }
+async function scanBle(){
+  const btn=$('ble-scan-btn'), lst=$('ble-scan-list');
+  btn.disabled=true; lst.innerHTML='<div class="scan-item"><span class="spin"></span>Scanning 8 s<span class="dot-anim"></span></div>';
+  const d=await postJ('/api/comm/scan',{}); btn.disabled=false;
+  if(!d.ok){ lst.innerHTML=''; return; }
+  if(!d.devices.length){
+    lst.innerHTML='<div class="scan-item"><span class="nm" style="color:var(--muted)">No JK BMS found. A BMS that is already connected does not advertise — Release BLE first to see it.</span></div>'; return; }
+  lst.innerHTML=d.devices.map(x=>`<div class="scan-item"><span class="nm">${esc(x.name||'?')} <span class="mono">${esc(x.mac)}</span></span>`+
+    `<span class="mono">${x.rssi} dBm</span><button class="btn-sm" data-mac="${esc(x.mac)}" data-name="${esc(x.name)}" onclick="useBle(this.dataset.mac,this.dataset.name)">Use</button></div>`).join(''); }
+async function useBle(mac,name){
+  if(!confirm('Use '+(name||'?')+' ('+mac+') as the BLE device?')) return;
+  await postJ('/api/comm',{interface:comm?comm.interface:'ble',ble_mac:mac,ble_name:name});
+  $('ble-scan-list').innerHTML=''; loadComm(); }
+async function toggleRelease(){
+  if(!comm) return; const rel=comm.ble.released_for>0;
+  await postJ('/api/comm/release',{seconds: rel?0:comm.release_sec}); loadComm(); }
+setInterval(()=>{ if($('tab-settings').classList.contains('on')) loadComm(); },3000);
 
 /* ── History Charts ── */
 const CHART_DEFAULTS = {

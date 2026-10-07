@@ -70,6 +70,7 @@ FILES=(
     "jk_ble.py"
     "mqtt_publisher.py"
     "requirements.txt"
+    "update.sh"
 )
 
 for f in "${FILES[@]}"; do

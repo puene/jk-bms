@@ -451,7 +451,8 @@ function renderComm(){
   setVal('comm-active',esc(act),c.active?'ok':'bad');
   setVal('ble-dev', b.mac ? esc(b.name||di.device_name||'JK BMS')+' <span class="mono">'+esc(b.mac)+'</span>'
                           : '<span class="mono">not selected — Scan</span>');
-  if(!b.enabled)            setVal('ble-st','off (RS485 selected)');
+  if(b.unavailable)         setVal('ble-st',esc(b.error),'bad');
+  else if(!b.enabled)       setVal('ble-st','off (RS485 selected)');
   else if(b.released_for>0) setVal('ble-st','released for phone app','warn');
   else if(b.connected)      setVal('ble-st','connected · data '+(b.last_frame_age??'--')+' s ago','ok');
   else                      setVal('ble-st',esc(b.error||'connecting…'),'warn');

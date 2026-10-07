@@ -21,7 +21,15 @@ from pymodbus.client import ModbusSerialClient
 from jk_reader import read_bms
 from jk_config import read_config, write_setting
 from jk_db     import init_db, maybe_log, query_history
-from jk_ble    import JkBle
+
+# BLE is optional: a site updated by an old update.sh may lack jk_ble.py or
+# bleak. Keep running RS485-only instead of failing to start.
+try:
+    from jk_ble import JkBle
+    BLE_IMPORT_ERR = ""
+except Exception as e:
+    JkBle = None
+    BLE_IMPORT_ERR = f"BLE unavailable ({e}) — re-run the latest update.sh"
 
 logging.basicConfig(level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -66,7 +74,22 @@ def _on_ble_auto_pick(mac, name):
         _comm.update(ble_mac=mac, ble_name=name)
         _save_comm(_comm)
 
-_ble = JkBle(on_auto_pick=_on_ble_auto_pick)
+class _NoBle:
+    """Stand-in when jk_ble/bleak cannot be imported."""
+    def configure(self, enabled, mac): pass
+    def latest(self): return None
+    def config(self): return {}
+    def refresh_config(self): pass
+    def release(self, seconds): pass
+    def released_for(self): return 0.0
+    def shutdown(self, timeout=5.0): pass
+    def scan(self, timeout=8.0): raise RuntimeError(BLE_IMPORT_ERR)
+    def status(self):
+        return {"enabled": False, "mac": None, "connected": False,
+                "last_frame_age": None, "device_info": {}, "error": BLE_IMPORT_ERR,
+                "crc_errors": 0, "released_for": 0, "unavailable": True}
+
+_ble = JkBle(on_auto_pick=_on_ble_auto_pick) if JkBle else _NoBle()
 
 def _apply_comm():
     with _comm_lock:
@@ -83,6 +106,8 @@ def _install_shutdown_handler():
 def _active_interface() -> Optional[str]:
     """Interface the poller reads from now: 'ble', 'rs485', or None
     (BLE released for the phone app and no RS485 adapter present)."""
+    if JkBle is None:
+        return "rs485"
     with _comm_lock:
         iface = _comm["interface"]
     if iface == "ble" and _ble.released_for() > 0:
@@ -276,6 +301,8 @@ def api_comm_set():
     iface = body.get("interface")
     if iface not in ("ble", "rs485"):
         return jsonify({"ok": False, "error": "interface must be 'ble' or 'rs485'"}), 400
+    if iface == "ble" and JkBle is None:
+        return jsonify({"ok": False, "error": BLE_IMPORT_ERR}), 409
     with _comm_lock:
         _comm["interface"] = iface
         if "ble_mac" in body:
@@ -330,6 +357,8 @@ if __name__ == "__main__":
     log.info("JK BMS Phase 3 | comm=%s ble_mac=%s | %s @%d slave=%s poll=%.1fs DHT=%s",
              _comm["interface"], _comm.get("ble_mac"),
              PORT, BAUDRATE, SLAVE, POLL_SEC, DHT_OK)
+    if BLE_IMPORT_ERR:
+        log.warning("%s — running RS485 only", BLE_IMPORT_ERR)
     threading.Thread(target=_poller, daemon=True, name="poller").start()
     app.run(host="0.0.0.0", port=5000, debug=False,
             use_reloader=False, threaded=True)

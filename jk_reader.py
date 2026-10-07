@@ -8,10 +8,11 @@ from jk_registers import (
     R_BAT_VOL, R_BAT_WATT_H, R_BAT_WATT_L,
     R_BAT_CURR_H, R_BAT_CURR_L, R_TEMP_BAT1, R_TEMP_BAT2,
     R_SOC, R_SOH_REG, R_CAP_REMAIN_H, R_CAP_REMAIN_L,
-    R_CAP_FULL_H, R_CAP_FULL_L, R_CYCLE_CAP,
+    R_CAP_FULL_H, R_CAP_FULL_L, R_CYCLE_CAP_H, R_CYCLE_CAP_L,
+    R_CYCLE_CNT_H, R_CYCLE_CNT_L,
     R_ALARM_H, R_ALARM_L,
     R_CYCLE_CNT, R_SYS_TICKS, R_CHG_DCH,
-    R_RUNTIME_H, R_RUNTIME_L, ALARM_BITS,
+    R_RUNTIME_H, R_RUNTIME_L, R_RUNTIME_C8_H, R_RUNTIME_C8_L, ALARM_BITS,
 )
 
 log = logging.getLogger("jk_reader")
@@ -105,25 +106,21 @@ def read_bms(client, slave=1):
         soh        = (_r(c8, C8, R_SOH_REG) >> 8) & 0xFF
         rem_cap    = _u32(_r(c8, C8, R_CAP_REMAIN_H), _r(c8, C8, R_CAP_REMAIN_L)) / 1000.0
         full_cap   = _u32(_r(c8, C8, R_CAP_FULL_H),   _r(c8, C8, R_CAP_FULL_L))   / 1000.0
-        cycle_cap  = _r(c8, C8, R_CYCLE_CAP) / 1000.0
+        cycle_cap  = _u32(_r(c8, C8, R_CYCLE_CAP_H), _r(c8, C8, R_CYCLE_CAP_L)) / 1000.0
+        cycle_cnt  = _u32(_r(c8, C8, R_CYCLE_CNT_H), _r(c8, C8, R_CYCLE_CNT_L))
         alm_flg    = _u32(_r(c8, C8, R_ALARM_H), _r(c8, C8, R_ALARM_L))
-        # n=9: CycleCount, ChgDch, SysTicks — may not respond on all firmware versions
+        # n=9: ChgDch — may not respond on all firmware versions
         c9 = _chunk_safe(client, C9, slave)
 
-        # CycleCount and ChgDch: try n=9 first, fall back to n=8
+        # ChgDch: try n=9 first, fall back to n=8
         # Both firmware versions store these at the same absolute addresses.
-        # When c9=None the registers fall within c8's range (offsets 14 & 16).
-        # NOTE: R_CYCLE_CNT=0x12B8 / R_CHG_DCH=0x12BA are offsets 24/26 from
-        # C8=0x12A0 — OUT of c8's 20-register window — so use the c8-valid
-        # addresses 0x12AE (offset 14) and 0x12B0 (offset 16) as fallbacks.
-        R_CYCLE_CNT_C8 = 0x12AE
+        # NOTE: R_CHG_DCH=0x12BA is offset 26 from C8=0x12A0 — OUT of c8's
+        # 20-register window — so use the c8-valid address 0x12B0 as fallback.
+        # CycleCount is read above from the UINT32 at 0x12A8/A9 (chunk n=8).
         R_CHG_DCH_C8   = 0x12B0
-        R_SYS_TICKS_C8 = 0x12AF  # also valid in c8 (offset 15)
         if c9:
-            cycle_cnt = _r(c9, C9, R_CYCLE_CNT)
             chg_dch   = _r(c9, C9, R_CHG_DCH)
         else:
-            cycle_cnt = _r(c8, C8, R_CYCLE_CNT_C8)
             chg_dch   = _r(c8, C8, R_CHG_DCH_C8)
 
         # RunTime: direct read (returns 0 inside chunk)
@@ -139,9 +136,8 @@ def read_bms(client, slave=1):
         except Exception as e:
             log.warning("RunTime: %s", e)
         if run_secs == 0:
-            ticks = _r(c9, C9, R_SYS_TICKS) if c9 else _r(c8, C8, R_SYS_TICKS_C8)
-            if ticks > 0:
-                run_secs = int(ticks * 0.1)
+            # fallback: same RunTime as UINT32 seconds at 0x12AE/AF (chunk n=8)
+            run_secs = _u32(_r(c8, C8, R_RUNTIME_C8_H), _r(c8, C8, R_RUNTIME_C8_L))
 
         # Format: X Years Y Months Z Days
         years  = run_secs // (365 * 86400)

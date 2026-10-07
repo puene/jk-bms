@@ -38,6 +38,7 @@ CMD_DEVICE_INFO = 0x97
 READ_ONLY_CMDS  = (CMD_CELL_INFO, CMD_DEVICE_INFO)
 
 FRAME_TIMEOUT  = 20.0    # reconnect if no cell-info frame for this long
+CELL_RETRY_SEC = 6.0     # resend 0x96 if the cell-info stream has not started
 AUTO_PICK_SEC  = 60.0    # scan interval while no MAC is configured
 
 
@@ -176,6 +177,8 @@ class JkBle:
         self._last_frame = 0.0
         self._error = ""
         self._crc_errors = 0
+        self._frame_counts: dict = {}
+        self._devinfo_evt: Optional[asyncio.Event] = None
 
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._bt_lock: Optional[asyncio.Lock] = None
@@ -227,6 +230,7 @@ class JkBle:
                 "device_info": dict(self._device_info),
                 "error":       self._error,
                 "crc_errors":  self._crc_errors,
+                "frames":      dict(self._frame_counts),   # frames received by type
                 "released_for": max(0, int(self._released_until - time.time())),
             }
 
@@ -326,9 +330,17 @@ class JkBle:
                 raise RuntimeError("characteristic 0xFFE1 not found")
             resp = "write-without-response" not in char.properties
             await client.start_notify(char, lambda _c, d: asm.feed(bytes(d)))
-            for cmd in (CMD_CELL_INFO, CMD_DEVICE_INFO):
-                await client.write_gatt_char(char, build_cmd(cmd), response=resp)
-                await asyncio.sleep(0.3)
+            # Same order as esphome-jk-bms: device info (0x97) first, then
+            # cell info (0x96). Some firmware (e.g. 15.x) stops the cell-info
+            # stream if 0x97 arrives after 0x96.
+            self._devinfo_evt = asyncio.Event()
+            await client.write_gatt_char(char, build_cmd(CMD_DEVICE_INFO), response=resp)
+            try:
+                await asyncio.wait_for(self._devinfo_evt.wait(), 3.0)
+            except asyncio.TimeoutError:
+                log.info("BLE %s: no device info within 3s, continuing", mac)
+            await client.write_gatt_char(char, build_cmd(CMD_CELL_INFO), response=resp)
+            last_96 = time.time()
             with self._lock:
                 self._connected, self._error = True, ""
                 self._last_frame = time.time()
@@ -337,15 +349,18 @@ class JkBle:
             while self._want() == mac:
                 if gone.is_set():
                     raise RuntimeError("disconnected by device")
+                now = time.time()
                 with self._lock:
-                    stale = time.time() - self._last_frame > FRAME_TIMEOUT
+                    quiet = now - self._last_frame
                     want_cfg, self._cfg_request = self._cfg_request, False
                     self._crc_errors = asm.crc_errors
-                if stale:
+                if quiet > FRAME_TIMEOUT:
                     raise RuntimeError(f"no data for {FRAME_TIMEOUT:.0f}s")
-                if want_cfg:
-                    # 0x96 makes the BMS resend its settings frame (0x01)
+                if want_cfg or (quiet > CELL_RETRY_SEC and now - last_96 > CELL_RETRY_SEC):
+                    # 0x96 (re)starts the cell-info stream and makes the BMS
+                    # resend its settings frame (0x01)
                     await client.write_gatt_char(char, build_cmd(CMD_CELL_INFO), response=resp)
+                    last_96 = now
                 await asyncio.sleep(0.5)
         finally:
             with self._lock:
@@ -358,6 +373,9 @@ class JkBle:
 
     def _on_frame(self, frame: bytes):
         ftype = frame[4]
+        with self._lock:
+            k = f"0x{ftype:02X}"
+            self._frame_counts[k] = self._frame_counts.get(k, 0) + 1
         try:
             if ftype == 0x02:
                 d = decode_cell_info(frame)
@@ -372,6 +390,8 @@ class JkBle:
                 info = decode_device_info(frame)
                 with self._lock:
                     self._device_info = info
+                if self._devinfo_evt is not None:
+                    self._devinfo_evt.set()
         except Exception as e:
             log.warning("BLE frame 0x%02X decode: %s", ftype, e)
 

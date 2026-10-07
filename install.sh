@@ -27,6 +27,7 @@ INSTALL_DIR="/home/pi/jk_bms"
 VENV_DIR="$INSTALL_DIR/.venv"
 SERVICE_DIR="/etc/systemd/system"
 PI_USER="pi"
+TIMEZONE="Asia/Bangkok"   # Raspberry Pi OS defaults to Europe/London
 
 # ── Colour helpers ─────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -42,6 +43,7 @@ step "JK BMS Installer"
 echo "  Install dir : $INSTALL_DIR"
 echo "  Python venv : $VENV_DIR"
 echo "  Source      : $REPO_BASE"
+echo "  Timezone    : $TIMEZONE"
 echo ""
 
 # ── 1. System packages ──────────────────────────────────────────────────────
@@ -49,6 +51,8 @@ step "1/5  System packages"
 apt-get update -qq
 apt-get install -y -qq python3-venv python3-pip libgpiod2 bluez
 info "System packages ready"
+timedatectl set-timezone "$TIMEZONE"
+info "Timezone set to $TIMEZONE (logs show local time; DB/MQTT use epoch UTC)"
 
 # ── 2. Download project files ───────────────────────────────────────────────
 step "2/5  Download project files"

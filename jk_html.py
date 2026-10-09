@@ -214,7 +214,7 @@ body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans
 
 <!-- SETTINGS -->
 <div class="panel" id="tab-settings">
-  <div class="cfg-hdr"><h2><i class="ti ti-adjustments"></i> Settings</h2></div>
+  <div class="cfg-hdr"><h2><i class="ti ti-adjustments"></i> Settings</h2><button class="btn-sm" onclick="refreshCfg()"><i class="ti ti-refresh"></i> Refresh</button></div>
   <div class="cfg-section" id="comm-box">
     <div class="cfg-sec-hdr comm" onclick="toggleSec(this)"><span><i class="ti ti-antenna"></i> Communication</span><span class="cfg-arrow">▼</span></div>
     <div class="cfg-rows">
@@ -374,9 +374,12 @@ async function refreshCfg(){
   if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader"></i> Loading...'; }
   cfgPending=true; $('cfg-loading').style.display='block'; $('cfg-content').innerHTML='';
   try{
+    // Ask the BMS to resend its settings (BLE: 0x96, RS485: re-read), then
+    // load them once the new values have had time to arrive.
     const r=await fetch('/api/config/refresh');
-    if(r.ok){ buildCfg(await r.json()); cfgPending=false; }
-    else $('cfg-loading').innerHTML='<span style="color:var(--red)">Error</span>';
+    if(!r.ok) throw new Error('refresh failed');
+    await new Promise(res=>setTimeout(res,3000));
+    await loadCfg();
   }catch(e){
     $('cfg-loading').innerHTML='<span style="color:var(--red)">Error</span>';
   }

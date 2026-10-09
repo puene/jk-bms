@@ -38,10 +38,11 @@ R_BAT_CURR_L = RT_BASE + 0x89   # 0x1289  INT32 Lo
 R_TEMP_BAT1  = RT_BASE + 0x8A   # 0x128A  INT16 ×0.1°C
 R_TEMP_BAT2  = RT_BASE + 0x8B   # 0x128B  INT16 ×0.1°C
 
-# n=8  0x12A0: BalanCurrent, AlarmFlags (SOC/Cap NOT here — in n=9!)
-# AlarmFlags UINT32 at 0x12B2/B3 (offset 18/19 of chunk n=8)
-R_ALARM_H      = 0x12B2
-R_ALARM_L      = 0x12B3
+# n=8  0x12A0: AlarmSta UINT32 at 0x12A0/A1 (JK RS485 Modbus V1.0), then
+# BalanCurrent, SOC, capacities ... Previously read from 0x12B2/B3 (wrong).
+# Cross-checked 2026-10-07: BLE cell-info offset 166 = same alarm word.
+R_ALARM_H      = 0x12A0
+R_ALARM_L      = 0x12A1
 
 # n=9  0x12B4: SOC, Cap, Cycle, State — VERIFIED from chunk dump 2026-06-12
 #   0x12A3 LoByte = SOC%  (offset 15 from 0x12B4? — check: 0x12A3 in chunk n=8!)
@@ -57,31 +58,45 @@ R_CAP_REMAIN_H = 0x12A4   # chunk n=8, UINT32 mAh Hi
 R_CAP_REMAIN_L = 0x12A5
 R_CAP_FULL_H   = 0x12A6   # chunk n=8, UINT32 mAh Hi  (SOCFullChargeCap)
 R_CAP_FULL_L   = 0x12A7
-# CycleCap: UINT16 single register (NOT UINT32 pair!)
-# VERIFIED: 0x12AB = 21306 mAh ≈ 21252 (value changes over time) ✓
-R_CYCLE_CAP    = 0x12AB   # UINT16 mAh (total Ah cycled)
+# CycleCount / CycleCap: UINT32 pairs in chunk n=8.
+# Reading CycleCap as UINT16 at 0x12AB only gave the low word (wrapped every
+# 65.5 Ah). Cross-checked vs BLE frame 2026-10-07: CycleCount=25, CycleCap=3043300 mAh.
+R_CYCLE_CNT_H  = 0x12A8   # UINT32 cycles Hi
+R_CYCLE_CNT_L  = 0x12A9
+R_CYCLE_CAP_H  = 0x12AA   # UINT32 mAh Hi (total Ah cycled)
+R_CYCLE_CAP_L  = 0x12AB
 # SOH: HiByte of 0x12AC = 100%
 # VERIFIED: 0x12AC = 0x6400 → HiByte=100=SOH%, LoByte=0 ✓
 R_SOH_REG      = 0x12AC   # HiByte = SOH%
-R_CYCLE_CNT    = 0x12B8   # chunk n=9
-R_SYS_TICKS    = 0x12B9   # chunk n=9, UINT16 ×0.1s (session)
+R_CYCLE_CNT    = 0x12B8   # chunk n=9 — NOT CycleCount (RunTime Hi word); unused
+R_SYS_TICKS    = 0x12B9   # chunk n=9 — NOT ticks (RunTime Lo word); unused
 R_CHG_DCH      = 0x12BA   # chunk n=9, HiByte=Charge LoByte=Discharge
-R_ALARM_H      = 0x12B2   # chunk n=8 offset 18
-R_ALARM_L      = 0x12B3   # chunk n=8 offset 19
 
 # RunTime: MUST be read directly (BMS returns 0 when read as part of chunk)
 # VERIFIED from Modbus capture: Tx 0x12BC count=2 → Rx 0x0005A823 = 370723s = 4D ✓
 R_RUNTIME_H    = 0x12BC   # direct read only
 R_RUNTIME_L    = 0x12BD
+# Same RunTime is also readable inside chunk n=8 as UINT32 at 0x12AE/AF.
+# VERIFIED 2026-10-07: 0x12AE=119, 0x12AF=46378 → 7845162 s ≈ run_secs.
+# (0x12AE was previously mistaken for CycleCount, 0x12AF for SysTicks.)
+R_RUNTIME_C8_H = 0x12AE
+R_RUNTIME_C8_L = 0x12AF
 
+# AlarmSta bit meanings — JK RS485 Modbus V1.0 (same word over BLE).
+# Confirmed on site 2026-10-07: bit 4 set at SOC 100 %, cells 4.18 V, 0 A,
+# charge MOS off (was mislabelled "Charge Overcurrent" before).
 ALARM_BITS = {
-    0:"Cell Overvoltage", 1:"Cell Undervoltage",
-    2:"Pack Overvoltage", 3:"Pack Undervoltage",
-    4:"Charge Overcurrent", 5:"Discharge Overcurrent",
-    6:"Charge Overtemp", 7:"Charge Undertemp",
-    8:"Discharge Overtemp", 9:"Discharge Undertemp",
-    10:"MOS Overtemp", 11:"Cell Imbalance",
-    12:"Short Circuit", 15:"Wire Resistance High",
+    0:"Wire Resistance High",      1:"MOS Overtemp",
+    2:"Cell Count Mismatch",       3:"Current Sensor Error",
+    4:"Cell Overvoltage",          5:"Pack Overvoltage",
+    6:"Charge Overcurrent",        7:"Charge Short Circuit",
+    8:"Charge Overtemp",           9:"Charge Undertemp",
+    10:"Internal Comm Error",      11:"Cell Undervoltage",
+    12:"Pack Undervoltage",        13:"Discharge Overcurrent",
+    14:"Discharge Short Circuit",  15:"Discharge Overtemp",
+    16:"Charge MOS Fault",         17:"Discharge MOS Fault",
+    18:"GPS Disconnected",         19:"Change Password Reminder",
+    20:"Discharge Start Failed",   21:"Battery Overtemp Alarm",
 }
 
 # ── Config fields ─────────────────────────────────────────────────────────────

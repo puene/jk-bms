@@ -39,6 +39,8 @@ READ_ONLY_CMDS  = (CMD_CELL_INFO, CMD_DEVICE_INFO)
 
 FRAME_TIMEOUT  = 20.0    # reconnect if no cell-info frame for this long
 CELL_RETRY_SEC = 6.0     # resend 0x96 if the cell-info stream has not started
+CFG_RETRY_SEC  = 10.0    # resend 0x96 if no settings frame yet (fw 15.x
+CFG_RETRY_MAX  = 6       #   sometimes skips it) — at most this many times
 AUTO_PICK_SEC  = 60.0    # scan interval while no MAC is configured
 
 
@@ -341,6 +343,7 @@ class JkBle:
                 log.info("BLE %s: no device info within 3s, continuing", mac)
             await client.write_gatt_char(char, build_cmd(CMD_CELL_INFO), response=resp)
             last_96 = time.time()
+            cfg_retries = 0
             with self._lock:
                 self._connected, self._error = True, ""
                 self._last_frame = time.time()
@@ -353,9 +356,14 @@ class JkBle:
                 with self._lock:
                     quiet = now - self._last_frame
                     want_cfg, self._cfg_request = self._cfg_request, False
+                    no_cfg = not self._config
                     self._crc_errors = asm.crc_errors
                 if quiet > FRAME_TIMEOUT:
                     raise RuntimeError(f"no data for {FRAME_TIMEOUT:.0f}s")
+                if (no_cfg and cfg_retries < CFG_RETRY_MAX
+                        and now - last_96 > CFG_RETRY_SEC):
+                    cfg_retries += 1
+                    want_cfg = True
                 if want_cfg or (quiet > CELL_RETRY_SEC and now - last_96 > CELL_RETRY_SEC):
                     # 0x96 (re)starts the cell-info stream and makes the BMS
                     # resend its settings frame (0x01)
